@@ -5,6 +5,9 @@
         "en": "Free and decentrelized search engine",
         "fr": "Moteur de recherche libre et décentralisé"
     },
+    "version": "1.92~ynh1",
+    "url": "https://example.com",
+    "license": "free",
     "developer": {
         "name": "Moul",
         "email": "moul@moul.re",

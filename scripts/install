@@ -1,41 +1,105 @@
-#!/bin/bash 
+#!/bin/bash
 
-# Retrieve arguments
-domain=$1
-path=$2
+#=================================================
+# GENERIC START
+#=================================================
+# IMPORT GENERIC HELPERS
+#=================================================
 
-# Check domain/path availability
-sudo yunohost app checkurl $domain$path -a yacy
-if [[ ! $? -eq 0 ]]; then
-    exit 1
-fi
+source _common.sh
+source /usr/share/yunohost/helpers
 
-# Check port availability
-sudo yunohost app checkport 8090
-if [[ ! $? -eq 0 ]]; then
-  exit 1
-fi
+#=================================================
+# MANAGE SCRIPT FAILURE
+#=================================================
 
-# Install Debian official package
-echo "deb http://debian.yacy.net ./" | sudo tee /etc/apt/sources.list.d/yacy.list
+ynh_clean_setup () {
+	### Remove this function if there's nothing to clean before calling the remove script.
+	true
+}
+# Exit if an error occurs during the execution of the script
+ynh_abort_if_errors
 
-gpg --keyserver pgpkeys.mit.edu --recv-key 1F968B3903D886E7
-gpg -a --export 1F968B3903D886E7 | sudo apt-key add -
+#=================================================
+# RETRIEVE ARGUMENTS FROM THE MANIFEST
+#=================================================
 
-sudo apt-get update
-sudo apt-get install yacy -y -qq
+domain=$YNH_APP_ARG_DOMAIN
+path_url=$YNH_APP_ARG_PATH
+
+app=$YNH_APP_INSTANCE_NAME
+
+#=================================================
+# FIND AND OPEN A PORT
+#=================================================
+ynh_script_progression --message="Configuring firewall..." --time --weight=1
+
+# Find an available port
+port=$(ynh_find_port --port=8090)
+ynh_app_setting_set --app=$app --key=port --value=$port
+
+#=================================================
+# INSTALL DEPENDENCIES
+#=================================================
+ynh_script_progression --message="Installing dependencies..." --time --weight=1
+
+ynh_install_app_dependencies $pkg_dependencies
+
+ynh_install_extra_app_dependencies --repo="deb http://debian.yacy.net ./" --package="yacy" --key="http://debian.yacy.net/yacy_orbiter_key.asc"
+
+
+
 
 # Modify Nginx and YaCy configuration file, then copy them to the right place
 sed -i "s@PATHTOCHANGE@$path@g" ../conf/nginx.conf
 sudo cp ../conf/nginx.conf /etc/nginx/conf.d/$domain.d/yacy.conf
 
-# Add YaCy service to the YunoHost monitoring
-sudo yunohost service add yacy --log /var/log/yacy/yacy00.log
 
-#Relancer le service YaCy avec la nouvelle configuration
-sudo yunohost service stop yacy
-sudo yunohost service start yacy
 
-# Reload Nginx and regenerate SSOwat conf
-sudo service nginx reload
-sudo yunohost app ssowatconf
+#=================================================
+# INTEGRATE SERVICE IN YUNOHOST
+#=================================================
+ynh_script_progression --message="Integrating service in YunoHost..." --time --weight=1
+
+yunohost service add $app --description "A short description of the app" --log "/var/log/$app/$app.log"
+
+#=================================================
+# START SYSTEMD SERVICE
+#=================================================
+ynh_script_progression --message="Starting a systemd service..." --time --weight=1
+
+# Start a systemd service
+ynh_systemd_action --service_name=$app --action="start" --log_path="/var/log/$app/$app.log"
+
+#=================================================
+# SETUP FAIL2BAN
+#=================================================
+ynh_script_progression --message="Configuring fail2ban..." --time --weight=1
+
+# Create a dedicated fail2ban config
+ynh_add_fail2ban_config --logpath="/var/log/nginx/${domain}-error.log" --failregex="Regex to match into the log for a failed login"
+
+#=================================================
+# SETUP SSOWAT
+#=================================================
+ynh_script_progression --message="Configuring SSOwat..." --time --weight=1
+
+# Make app public if necessary
+if [ $is_public -eq 1 ]
+then
+	# unprotected_uris allows SSO credentials to be passed anyway.
+	ynh_app_setting_set --app=$app --key=unprotected_uris --value="/"
+fi
+
+#=================================================
+# RELOAD NGINX
+#=================================================
+ynh_script_progression --message="Reloading nginx web server..." --time --weight=1
+
+ynh_systemd_action --service_name=nginx --action=reload
+
+#=================================================
+# END OF SCRIPT
+#=================================================
+
+ynh_script_progression --message="Installation of $app completed" --time --last
